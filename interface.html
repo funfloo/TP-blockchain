@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <title>Interface de Traçabilité Blockchain</title>
+  <!-- Inclusion d'ethers.js depuis un CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/ethers/dist/ethers.min.js"></script>
+</head>
+<body>
+  <h1>Interface de Traçabilité des Produits</h1>
+  <div>
+    <button id="connectWallet">Connecter votre portefeuille</button>
+  </div>
+  <div id="contractInterface" style="display:none;">
+    <h2>Ajouter un Produit</h2>
+    <form id="productForm">
+      <label>Nom du Produit : <input type="text" id="productName" required></label><br>
+      <label>Nombre de Lots : <input type="number" id="totalLots" required></label><br>
+      <label>Identifiant du Lot : <input type="text" id="batchIdentifier" required></label><br>
+      <label>Total Produits par Lot : <input type="number" id="totalProducts" required></label><br>
+      <label>Dernier Propriétaire : <input type="text" id="lastOwner" required></label><br>
+      <label>Date d'Achat (timestamp Unix) : <input type="number" id="purchaseDate" required></label><br>
+      <button type="submit">Ajouter le Produit</button>
+    </form>
+  </div>
+
+  <script>
+    // Adresse du contrat déployé
+    const contractAddress = '0xYourContractAddressHere'; // Remplacer par l'adresse de ton contrat
+    // ABI généré lors de la compilation du contrat
+    const contractABI = [ 
+      // Insérer ici l’ABI du contrat (générée via Remix ou truffle)
+    ];
+
+    let provider;
+    let signer;
+    let contract;
+
+    // Bouton pour connecter le portefeuille (MetaMask)
+    document.getElementById("connectWallet").addEventListener("click", async () => {
+      if (typeof window.ethereum !== 'undefined') {
+        try {
+          await ethereum.request({ method: 'eth_requestAccounts' });
+          provider = new ethers.providers.Web3Provider(window.ethereum);
+          signer = provider.getSigner();
+          contract = new ethers.Contract(contractAddress, contractABI, signer);
+          document.getElementById("contractInterface").style.display = "block";
+        } catch (err) {
+          console.error(err);
+          alert("Connexion échouée");
+        }
+      } else {
+        alert("Veuillez installer MetaMask");
+      }
+    });
+
+    // Gestion du formulaire d'ajout de produit
+    document.getElementById("productForm").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      
+      // Récupérer les valeurs du formulaire
+      const productName = document.getElementById("productName").value;
+      const totalLots = parseInt(document.getElementById("totalLots").value);
+      const batchIdentifier = document.getElementById("batchIdentifier").value;
+      const totalProducts = parseInt(document.getElementById("totalProducts").value);
+      const lastOwner = document.getElementById("lastOwner").value;
+      const purchaseDate = parseInt(document.getElementById("purchaseDate").value);
+
+      // Appel de la fonction addProduct du contrat
+      try {
+        const tx = await contract.addProduct(totalLots, productName, batchIdentifier, totalProducts, lastOwner, purchaseDate);
+        await tx.wait();
+        alert("Produit ajouté avec succès !");
+      } catch (error) {
+        console.error(error);
+        alert("Erreur lors de l'ajout du produit");
+      }
+    });
+  </script>
+</body>
+</html>
