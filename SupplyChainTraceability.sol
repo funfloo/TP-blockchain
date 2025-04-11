@@ -1,107 +1,146 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
-contract SupplyChainTraceability {
-    // Adresse du propriétaire du contrat
+/* =======================================================
+   Module Ownable : Gestion de la propriété du contrat
+   ======================================================= */
+contract Ownable {
     address public owner;
 
-    // Mapping pour la liste blanche des adresses autorisées
-    mapping(address => bool) public whitelist;
-
-    // Événements pour suivre les changements
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
-    event ParticipantAdded(address indexed participant);
-    event ParticipantRemoved(address indexed participant);
-    event ProductAdded(uint256 productId, string productName, string batchIdentifier);
-    event ProductUpdated(uint256 productId, string lastOwner, uint256 purchaseDate);
 
-    // Constructeur initialisé avec l'adresse de déploiement
+    // Le constructeur définit l'adresse du déployeur comme propriétaire initial
     constructor() {
         owner = msg.sender;
-        whitelist[msg.sender] = true;
     }
 
-    // Modificateur pour restreindre l'accès aux fonctions réservées au propriétaire
+    // Restriction pour les fonctions réservées au propriétaire
     modifier onlyOwner() {
-        require(msg.sender == owner, "Seul le proprietaire peut effectuer cette operation");
-        _;
-    }
-    
-    // Modificateur pour restreindre l'accès aux adresses de la whitelist
-    modifier onlyWhitelisted() {
-        require(whitelist[msg.sender], "Adresse non autorisee");
+        require(msg.sender == owner, "Seul le proprietaire peut appeler cette fonction");
         _;
     }
 
-    // Fonction pour transférer la propriété du contrat
-    function transferOwnership(address newOwner) external onlyOwner {
-        require(newOwner != address(0), "Nouvel adresse invalide");
+    // Permet de transférer la propriété du contrat à une nouvelle adresse
+    function transferOwnership(address newOwner) public onlyOwner {
+        require(newOwner != address(0), "Adresse non valide");
         emit OwnershipTransferred(owner, newOwner);
         owner = newOwner;
-        whitelist[newOwner] = true; // On peut ajouter automatiquement le nouveau proprietaire à la whitelist
+    }
+}
+
+/* =======================================================
+   Module Whitelist : Gestion d'une liste blanche de participants
+   ======================================================= */
+contract Whitelist is Ownable {
+    mapping(address => bool) public whitelist;
+
+    event WhitelistedAdded(address indexed account);
+    event WhitelistedRemoved(address indexed account);
+
+    // Restriction aux comptes enregistrés dans la whitelist
+    modifier onlyWhitelisted() {
+        require(whitelist[msg.sender], "L'adresse n'est pas dans la whitelist");
+        _;
     }
 
-    // Gestion de la whitelist des participants
-    function addParticipant(address participant) external onlyOwner {
-        whitelist[participant] = true;
-        emit ParticipantAdded(participant);
-    }
-    
-    function removeParticipant(address participant) external onlyOwner {
-        whitelist[participant] = false;
-        emit ParticipantRemoved(participant);
+    // Permet d'ajouter un compte dans la whitelist (seul le propriétaire peut le faire)
+    function addWhitelist(address account) public onlyOwner {
+        require(!whitelist[account], "Adresse deja autorisee");
+        whitelist[account] = true;
+        emit WhitelistedAdded(account);
     }
 
-    // Définition de la structure d'un produit / lot
-    struct Product {
-        address manufacturer;     // Identification du fabricant (l'adresse qui ajoute le produit)
-        uint256 totalLots;        // Nombre de lots (peut représenter le nombre de batches si nécessaire)
-        string productName;       // Nom du produit
-        string batchIdentifier;   // Identifiant unique du lot
-        uint256 totalProducts;    // Nombre total de produits par lot
-        string lastOwner;         // Nom du dernier propriétaire (souvent mis à jour lors du transfert)
-        uint256 purchaseDate;     // Date d'achat sous forme de timestamp Unix
+    // Permet de retirer un compte de la whitelist (seul le propriétaire peut le faire)
+    function removeWhitelist(address account) public onlyOwner {
+        require(whitelist[account], "L'adresse n'est pas autorisee");
+        whitelist[account] = false;
+        emit WhitelistedRemoved(account);
+    }
+}
+
+/* =======================================================
+   Contrat TraceabiliteProduit : Suivi des produits et lots
+   ======================================================= */
+contract TraceabiliteProduit is Whitelist {
+    // Définition de la structure d'un lot de produits
+    struct Lot {
+        address fabricant;         // Adresse du fabricant ou producteur
+        uint lotId;                // Identifiant unique du lot (doit être non nul)
+        string nomProduit;         // Nom du produit
+        uint nombreTotal;          // Nombre total de produits dans le lot
+        string dernierProprietaire;// Nom du dernier propriétaire du lot
+        uint dateAchat;            // Date d'achat (par exemple, un timestamp)
     }
 
-    // Stockage des produits dans un mapping et compteur d'identifiants
-    mapping(uint256 => Product) public products;
-    uint256 public productCount;
+    // Mapping permettant d'associer un identifiant de lot à ses informations
+    mapping(uint => Lot) public lots;
+    // Compteur du nombre total de lots créés
+    uint public nombreDeLots;
 
-    // Fonction pour ajouter un nouveau produit / lot
-    function addProduct(
-        uint256 totalLots,
-        string memory productName,
-        string memory batchIdentifier,
-        uint256 totalProducts,
-        string memory lastOwner,
-        uint256 purchaseDate
-    ) external onlyWhitelisted returns (uint256) {
-        productCount++;
-        products[productCount] = Product(
-            msg.sender,
-            totalLots,
-            productName,
-            batchIdentifier,
-            totalProducts,
-            lastOwner,
-            purchaseDate
-        );
-        emit ProductAdded(productCount, productName, batchIdentifier);
-        return productCount;
-    }
+    // Événements pour le suivi des opérations sur les lots
+    event LotAjoute(uint indexed lotId, address fabricant, string nomProduit, uint nombreTotal, string dernierProprietaire, uint dateAchat);
+    event LotMisAJour(uint indexed lotId, string nouveauProprietaire, uint dateAchat);
 
-    // Fonction pour mettre à jour les informations d'un produit après transfert (ex. changement de propriétaire)
-    function updateProduct(
-        uint256 productId,
-        string memory newLastOwner,
-        uint256 newPurchaseDate
+    /**
+     * @notice Ajoute un nouveau lot de produits.
+     * @dev Seuls les comptes de la whitelist peuvent ajouter un lot.
+     * @param _lotId Identifiant du lot (doit être non nul et unique)
+     * @param _nomProduit Nom du produit associé au lot
+     * @param _nombreTotal Nombre total de produits dans le lot
+     * @param _dernierProprietaire Nom initial du dernier propriétaire (par exemple, le fabricant)
+     * @param _dateAchat Date de l'achat ou de création du lot
+     */
+    function ajouterLot(
+        uint _lotId,
+        string calldata _nomProduit,
+        uint _nombreTotal,
+        string calldata _dernierProprietaire,
+        uint _dateAchat
     ) external onlyWhitelisted {
-        require(productId > 0 && productId <= productCount, "Identifiant du produit invalide");
-        Product storage p = products[productId];
-        p.lastOwner = newLastOwner;
-        p.purchaseDate = newPurchaseDate;
-        emit ProductUpdated(productId, newLastOwner, newPurchaseDate);
+        require(_lotId > 0, "L'identifiant du lot doit etre superieur a 0");
+        // Vérifie qu'aucun lot n'existe déjà avec cet ID
+        require(lots[_lotId].lotId == 0, "Un lot avec cet identifiant existe deja");
+
+        lots[_lotId] = Lot({
+            fabricant: msg.sender,
+            lotId: _lotId,
+            nomProduit: _nomProduit,
+            nombreTotal: _nombreTotal,
+            dernierProprietaire: _dernierProprietaire,
+            dateAchat: _dateAchat
+        });
+
+        nombreDeLots++;
+        emit LotAjoute(_lotId, msg.sender, _nomProduit, _nombreTotal, _dernierProprietaire, _dateAchat);
     }
 
-    // D'autres fonctions (lecture, filtrage, historique) peuvent être ajoutées suivant les besoins.
+    /**
+     * @notice Transfère la propriété d'un lot à un nouveau propriétaire.
+     * @dev Seuls les comptes de la whitelist peuvent transférer un lot.
+     * @param _lotId Identifiant du lot à transférer
+     * @param _nouveauProprietaire Nom du nouveau propriétaire
+     * @param _dateAchat Date de transfert ou d'achat correspondant au changement de propriétaire
+     */
+    function transfererLot(
+        uint _lotId,
+        string calldata _nouveauProprietaire,
+        uint _dateAchat
+    ) external onlyWhitelisted {
+        require(lots[_lotId].lotId != 0, "Le lot n'existe pas");
+
+        // Mise à jour du dernier propriétaire et de la date d'achat
+        lots[_lotId].dernierProprietaire = _nouveauProprietaire;
+        lots[_lotId].dateAchat = _dateAchat;
+        emit LotMisAJour(_lotId, _nouveauProprietaire, _dateAchat);
+    }
+
+    /**
+     * @notice Permet de consulter les informations d'un lot.
+     * @param _lotId Identifiant du lot à consulter
+     * @return Les informations du lot (structure Lot)
+     */
+    function consulterLot(uint _lotId) external view returns (Lot memory) {
+        require(lots[_lotId].lotId != 0, "Le lot n'existe pas");
+        return lots[_lotId];
+    }
 }
